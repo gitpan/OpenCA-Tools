@@ -4,4 +4,5 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'	=> 'OpenCA::Tools',
     'VERSION_FROM' => 'Tools.pm', # finds $VERSION
+#    'MAN3PODS'     => {'Tools.pod'}
 );

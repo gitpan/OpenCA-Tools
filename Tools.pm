@@ -54,7 +54,14 @@ use strict;
 
 package OpenCA::Tools;
 
-$OpenCA::Tools::VERSION = '0.4.3a';
+$OpenCA::Tools::VERSION = '0.4.3';
+
+use FileHandle;
+our ($STDERR, $STDOUT);
+$STDOUT = \*STDOUT;
+$STDERR = \*STDERR;
+
+our ($errno, $errval);
 
 sub new {
 	my $that = shift;
@@ -62,6 +69,17 @@ sub new {
 
 	my $self = {};
 	bless $self, $class;
+
+        my $keys = { @_ };
+        if (scalar @_ == 1) {
+            return undef if (not $self->setXMLConfig ($_[0]));
+        } elsif (scalar @_ > 1) {
+            if ($keys->{CONFIG}) {
+                return undef if (not $self->setXMLConfig ($keys->{CONFIG}));
+            } elsif ($keys->{CONFIGURATION}) {
+                return undef if (not $self->setXMLConfig ($keys->{CONFIGURATION}));
+            }
+        }
 
 	return $self;
 }
@@ -118,7 +136,8 @@ sub getFile {
         while ( $temp = <FD> ) {
                 $ret .= $temp;
         };
-        return $ret;
+        close FD;
+        return $self->getConfiguredData ($ret);
 }
 
 sub saveFile {
@@ -146,6 +165,9 @@ sub copyFiles {
 	my @fileList = glob("$src");
 	my ( @tmp, $tmpDst, $line, $file, $fileName );
 
+	print "OpenCA::Tools: copyFiles<br>\n" if ($self->{DEBUG});
+	print "OpenCA::Tools: src = $src<br>\n" if ($self->{DEBUG});
+	print "OpenCA::Tools: fileList = ".join (",", @fileList)."<br>\n" if ($self->{DEBUG});
 	foreach $file (@fileList) {
 		next if( (not -e $file) or ( -d $src) );
 		if( -d "$dst" ) {
@@ -156,14 +178,18 @@ sub copyFiles {
 		} else {
 			$tmpDst = "$dst";
 		}
-			
+		
+		print "OpenCA::Tools: variables defined to copy a file (from $file to $tmpDst)<br>\n" if ($self->{DEBUG});
 		open( FD, "<$file" ) or return;
+		print "OpenCA::Tools: $file was opened for reading<br>\n" if ($self->{DEBUG});
 		open( DF, ">$tmpDst" ) or return;
+		print "OpenCA::Tools: $tmpDst was opened for writing<br>\n" if ($self->{DEBUG});
 			while( $line = <FD> ) {
 				print DF $line;
 			}
 		close(DF);
 		close(FD);
+		print "OpenCA::Tools: copying completed<br>\n" if ($self->{DEBUG});
 
 		if( $md =~ /MOVE/i ) {
 			unlink("$file");
@@ -302,162 +328,165 @@ sub parseDN {
 	return $ret;
 }
 
+sub setXMLConfig {
 
+    my $self = shift;
+
+    if (scalar @_ == 2) {
+       my $keys = { @_ };
+       $self->{xml_config} = $keys->{CONFIG}        if ($keys->{CONFIG});
+       $self->{xml_config} = $keys->{CONFIGURATION} if ($keys->{CONFIGURATION});
+    } elsif (scalar @_ == 1) {
+       $self->{xml_config} = $_[0];
+    } else {
+       $self->setError (5171010, "OpenCA::TRIStateCGI->setXMLConfig was used with an uncorrect".
+                                 " number of arguments.");
+       return undef;
+    }
+
+    return 1;
+}
+
+sub loadXMLConfig {
+
+    my $self = shift;
+
+    use XML::Twig;
+    $self->{twig} = new XML::Twig;
+    if (not $self->{twig})
+    {
+        $self->setError (5173010, "XML::Twig cannot be created");
+        return undef;
+    }
+
+    if (not $self->{twig}->safe_parsefile($self->{xml_config}))
+    {
+        $self->setError (6231020, "XML::Twig cannot parse configuration file ".$self->{xml_config}.".".
+                                  "XML::Parser returned errormessage: ".$@);
+        return undef;
+    }
+
+    return 1;
+}
+
+sub getConfiguredData {
+
+    my $self = shift;
+    my $data = "";
+
+    ## get data
+    if (scalar @_ == 2) {
+       my $keys = { @_ };
+       $data = $keys->{DATA};
+    } elsif (scalar @_ == 1) {
+       $data = $_[0];
+    } else {
+       $self->setError (5175010, "OpenCA::TRIStateCGI->getConfiguredData was used with an uncorrect".
+                                 " number of arguments.");
+       return undef;
+    }
+
+    ## load configuration
+    return $data if (not $self->{xml_config});
+    return undef if (not $self->{twig} and not $self->loadXMLConfig());
+
+    ## check for software configuration
+    if (not $self->{twig}->get_xpath ('software_config')) {
+        $self->setError (5175020, "There is no software configuration in the XML configuration file.");
+        return undef;
+    }
+
+    ## check for prefix and suffix
+    if (not $self->{twig}->get_xpath ('software_config/prefix')) {
+        $self->setError (5175023, "There is no prefix in the software configuration of the XML configuration file.");
+        return undef;
+    }
+    if (not $self->{twig}->get_xpath ('software_config/suffix')) {
+        $self->setError (5175026, "There is no suffix in the software configuration of the XML configuration file.");
+        return undef;
+    }
+
+    ## load prefix and suffix
+    $self->{option_prefix} = ($self->{twig}->get_xpath ('software_config/prefix'))[0]->field;
+    $self->{option_suffix} = ($self->{twig}->get_xpath ('software_config/suffix'))[0]->field;
+    my $prefix = $self->{option_prefix};
+    my $suffix = $self->{option_suffix};
+
+    ## translate data
+    foreach my $option ($self->{twig}->get_xpath('software_config/option'))
+    {
+        ## check for a name and value
+        if (not $option->first_child ('name')) {
+            $self->setError (5175033, "There is no name for an option of the software configuration ".
+                                      "of the XML configuration file.");
+            return undef;
+        }
+        if (not $option->first_child ('value')) {
+            $self->setError (5175036, "There is no value for an option of the software configuration ".
+                                      "of the XML configuration file.");
+            return undef;
+        }
+
+        ## replace the options in the data
+        my $name  = $option->first_child ('name')->field;
+        my $value = $option->first_child ('value')->field;
+        $value = $option->first_child ('value')->first_child->sprint
+            if ($option->first_child ('value')->first_child);
+        $data =~ s/${prefix}${name}${suffix}/${value}/sg;
+    }
+
+    return $data;
+}
+
+sub setError {
+    my $self = shift;
+
+    if (scalar (@_) == 4) {
+        my $keys = { @_ };
+        $errval = $keys->{ERRVAL};
+        $errno  = $keys->{ERRNO};
+    } else {
+        $errno  = $_[0];
+        $errval = $_[1];
+    }
+
+    print $STDERR "PKI Master Alert: Access control is misconfigured\n";
+    print $STDERR "PKI Master Alert: Aborting all operations\n";
+    print $STDERR "PKI Master Alert: Error:   $errno\n";
+    print $STDERR "PKI Master Alert: Message: $errval\n";
+    print $STDERR "PKI Master Alert: debugging messages of access control follow\n";
+    $self->{debug_fd} = $STDERR;
+    $self->debug ();
+    $self->{debug_fd} = $STDOUT;
+
+    ## support for: return $self->setError (1234, "Something fails.") if (not $xyz);
+    return undef;
+}
+
+sub debug {
+
+    my $self = shift;
+    if ($_[0]) {
+        $self->{debug_msg}[scalar @{$self->{debug_msg}}] = $_[0];
+        $self->debug () if ($self->{DEBUG});
+    } else {
+        my $msg;
+        foreach $msg (@{$self->{debug_msg}}) {
+            $msg =~ s/ /&nbsp;/g;
+            my $oldfh = select $self->{debug_fd};
+            print $STDOUT $msg."<br>\n";
+            select $oldfh;
+        }
+        $self->{debug_msg} = ();
+    }
+
+}
+
+#############################################################################
+##                         check the channel                               ##
+#############################################################################
 # Preloaded methods go here.
 
 # Autoload methods go after =cut, and are processed by the autosplit program.
 
 1;
-__END__
-# Below is the stub of documentation for your module. You better edit it!
-
-=head1 NAME
-
-OpenCA::Tools - Misc Utilities PERL Extention.
-
-=head1 SYNOPSIS
-
-  use OpenCA::Tools;
-
-=head1 DESCRIPTION
-
-This module provides some tools to easy some standard actions. Current
-functions description follows:
-
-	new		- Returns a reference to the object.
-	getDate		- Returns a Printable date string.
-	getFile		- Load data from a file passed as argument.
-	saveFile	- Save DATA to FILENAME.
-	copyFiles	- Copy file(s).
-	moveFiles	- Move file(s).
-	deleteFiles	- Delete file(s).
-	cmpDate		- Compare two Printable date sting.
-	isInsidePeriod	- Check wether give date is within given
-			  period.
-	parseDN         - Parse a given DN returning an HASH value.
-
-=head1 FUNCTIONS
-
-=head2 sub new () - Build new instance of the class.
-
-	This function returns a new instance of the class. No parameters
-	needed.
-
-	EXAMPLE:
-	
-		my $tools = new OpenCA::Tools();
-
-=head2 sub getDate () - Get a Printable date string.
-
-	Returns a string representing current time (GMT or Local).
-	Accepted parameters are:
-
-		FORMAT  - Use it to get local or GMT time.
-			  Defaults to GMT.
-
-	EXAMPLE:
-
-		print $tools->getDate();
-
-=head2 sub copyFiles () - Copy file(s).
-
-	Use this function to copy file(s). Source path can contain
-	wildcards (i.e. '*') that will be expanded when copying.
-	Accepted parameters are:
-
-		SRC  - Source full path.
-		DEST - Destination path.
-
-	EXAMPLE:
-
-		$tools->copyFiles( SRC=>"test.pl", DEST=>"/tmp" );
-
-=head2 sub moveFiles () - Move file(s).
-
-	Use this function to move file(s). Source path can contain
-	wildcards (i.e. '*') that will be expanded when copying.
-	Accepted parameters are:
-
-		SRC  - Source full path.
-		DEST - Destination path.
-
-	EXAMPLE:
-
-		$tools->moveFiles( SRC=>"test.pl", DEST=>"/tmp" );
-
-=head2 sub deleteFiles () - Delete file(s).
-
-	Use this function to delete file(s) once provided target
-	directory and filter.
-	Accepted parameters are:
-
-		DIR    - Directory containing file(s) to delete.
-		FILTER - File filtering(*).
-
-	(*) - Optional parameters;
-
-	EXAMPLE:
-
-		$tools->deleteFiles( DIR=>"/tmp", FILTER=>"prova.p*" );
-
-=head2 sub cmpDate () - Compare two date strings.
-
-	Use this function to get informations on relationship
-	between the two provided date strings. Returns integer
-	values like strcmp() do in C, so if DATE_1 'is later'
-	than DATE_2 it returns a positive value. A negative value
-	is returned in the countrart case while 0 is returned if
-	the two dates are equal. Accepted parameters:
-
-		DATE_1  - First date string.
-		DATE_2  - Second date string.
-
-	EXAMPLE:
-
-		$tools->cmpDate( DATA_1=>"$date1", DATA_2=>"$date2" );
-
-=head2 sub isInsidePerios - Check if date is inside a given period.
-
-	This functions returns a true (1) value if the provided
-	date is within a given period. Accepted parameters are:
-
-		DATE     - Date string to check.
-		START	 - Date string indicating period's starting(*).
-		END      - Date string indicating period's ending(*).
-
-	(*) - Optional parameters;
-
-		if( not $tools->isInsidePeriod( DATE=>$d1, START=>$d2,
-				END=>$d3 ) ) {
-			print "Non in period... \n";
-		}
-
-=head2 sub parseDN () - Parse a given DN.
-
-	This function parses a given DN string and returns an HASH
-	value. Returned structure is as following:
-
-		KEY => VALUE,
-
-	Only the OU key is instead a list:
-
-		OU => [ @list ]
-
-	EXAMPLE:
-
-		$parsed = $tools->parseDN( $dn );
-		print $parsed->{CN};
-
-		foreach $tmp ( @{ $parsed->{OU} } ) {
-			print "OU=$tmp\n";
-		}
-
-=head1 AUTHOR
-
-Massimiliano Pala <madwolf@openca.org>
-
-=head1 SEE ALSO
-
-OpenCA::Configuration, OpenCA::TRIStateCGI, OpenCA::X509, OpenCA::CRL, OpenCA::REQ, OpenCA::OpenSSL, perl(1).
-
-=cut
