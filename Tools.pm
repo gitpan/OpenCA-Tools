@@ -54,7 +54,7 @@ use strict;
 
 package OpenCA::Tools;
 
-$OpenCA::Tools::VERSION = '0.4.2a';
+$OpenCA::Tools::VERSION = '0.4.3a';
 
 sub new {
 	my $that = shift;
@@ -110,15 +110,29 @@ sub subVar {
 
 sub getFile {
         my $self = shift;
-        my @keys = @_;
+        my $fileName = shift;
 
         my ( $ret, $temp );
 
-        open( FD, $keys[0] ) || return;
+        open( FD, $fileName ) || return;
         while ( $temp = <FD> ) {
                 $ret .= $temp;
         };
         return $ret;
+}
+
+sub saveFile {
+        my $self = shift;
+        my $keys = { @_ };
+
+	my $fileName = $keys->{FILENAME};
+	my $data     = $keys->{DATA};
+
+        open( FD, ">$fileName" ) || return;
+		print FD $data;
+	close(FD);
+
+	return 1;
 }
 
 sub copyFiles {
@@ -312,6 +326,8 @@ functions description follows:
 
 	new		- Returns a reference to the object.
 	getDate		- Returns a Printable date string.
+	getFile		- Load data from a file passed as argument.
+	saveFile	- Save DATA to FILENAME.
 	copyFiles	- Copy file(s).
 	moveFiles	- Move file(s).
 	deleteFiles	- Delete file(s).
