@@ -49,9 +49,12 @@
 ## copied and put under another distribution licence
 ## [including the GNU Public Licence.]
 ##
+
+use strict;
+
 package OpenCA::Tools;
 
-$VERSION = '0.3.01';
+$OpenCA::Tools::VERSION = '0.4.2a';
 
 sub new {
 	my $that = shift;
@@ -107,9 +110,9 @@ sub subVar {
 
 sub getFile {
         my $self = shift;
-        my $ret;
-        my @keys;
-        @keys = @_;
+        my @keys = @_;
+
+        my ( $ret, $temp );
 
         open( FD, $keys[0] ) || return;
         while ( $temp = <FD> ) {
@@ -127,7 +130,7 @@ sub copyFiles {
 	my $md  = $keys->{MODE};
 
 	my @fileList = glob("$src");
-	my @tmp, $tmpDst, $line;
+	my ( @tmp, $tmpDst, $line, $file, $fileName );
 
 	foreach $file (@fileList) {
 		next if( (not -e $file) or ( -d $src) );
@@ -169,11 +172,12 @@ sub deleteFiles {
 	my $dir    = $keys->{DIR};
 	my $filter = $keys->{FILTER};
 
+	my ( @tmp, $file );
+
 	$filter = '*' if ( not $filter );
 	$dir =~ s/\/$//g;
 
 	my @fileList = glob("$dir/$filter");
-	my @tmp, $file;
 
 	foreach $file (@fileList) {
 		next if( not -e "$file" );
@@ -193,7 +197,7 @@ sub cmpDate {
 	my $keys = { @_ };
 	my @monList = ( "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
 			  "Aug", "Sep", "Oct", "Nov", "Dec" );
-	my $mon=0, $m1, $m2, $tmp;
+	my ( $m1, $m2, $tmp );
 
 	my $date1 = $keys->{DATE_1};
 	my $date2 = $keys->{DATE_2};
@@ -202,6 +206,8 @@ sub cmpDate {
 	$date2 =~ s/([\D]*)$//g;
 
 	return if( (not $date1) or (not $date2) );
+
+	my $mon = 0;
 
 	my ( @T1 ) =
 	 ( $date1 =~ /([\d]+)[\s]+([\d]+):([\d]+):([\d]+)[\s]+([\d]+)/g );
